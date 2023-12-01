@@ -1,0 +1,288 @@
+from sklearn.linear_model import LinearRegression
+from implicit.als import AlternatingLeastSquares
+from implicit.nearest_neighbours import CosineRecommender
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy import Column, Integer, String, DateTime
+from sqlalchemy.exc import IntegrityError
+from datetime import datetime
+import numpy as np
+import pandas as pd
+import json
+import ast
+
+Base = declarative_base()
+
+class UserData(Base):
+    __tablename__ = 'user_data'
+    id = Column(Integer, primary_key=True)
+    cpf = Column(String, unique=True)
+    meal_type = Column(String)
+    glicemia = Column(String)
+    alimentos = Column(String)
+    data_registro = Column(DateTime, default=datetime.utcnow)
+
+class GlicnutModel:
+    def __init__(self, historical_data_file):
+        self.engine = create_engine('sqlite:///glicnut.db')
+        Base.metadata.create_all(self.engine)
+        self.Session = sessionmaker(bind=self.engine)
+        self.historical_data = pd.read_csv(historical_data_file, delimiter=';')
+
+    def get_user_data(self, cpf):
+        session = self.Session()
+        user = session.query(UserData).filter_by(cpf=cpf).first()
+        session.close()
+        return user
+
+    def register_user(self, cpf):
+        session = self.Session()
+        if len(cpf) != 11 or not cpf.isdigit():
+            print("\nCPF inválido. Digite um CPF válido com 11 dígitos numéricos.")
+            session.close()
+            return
+
+        if session.query(UserData).filter_by(cpf=cpf).first():
+            print("\nUsuário já cadastrado.")
+            session.close()
+            return
+
+        new_user = UserData(cpf=cpf, meal_type=None, glicemia=None, alimentos=None)
+        session.add(new_user)
+        session.commit()
+        session.close()
+
+        print("\nNovo usuário cadastrado com sucesso!")
+
+    def save_user_data(self, cpf, meal_type, glicemia, alimentos):
+        session = self.Session()
+              
+        # Verificar se o usuário já existe no banco de dados
+        user = session.query(UserData).filter_by(cpf=cpf).first()
+        
+        if user:
+            # Se o usuário já existe, criamos uma nova entrada associada a ele
+            new_user_data = UserData(cpf=cpf, meal_type=meal_type, glicemia=glicemia, alimentos=str(alimentos))
+            new_user_data.data_registro = datetime.now()
+            session.add(new_user_data)
+            session.commit()
+            session.close()
+            print("\nDados registrados com sucesso!")
+        else:
+            print("\nUsuário não encontrado. Registre o usuário antes de salvar os dados.")
+            session.close()
+
+    def get_glicemia(self):
+        while True:
+            glicemia_input = input("\nDigite o valor atual da glicemia: ")
+            if len(glicemia_input) == 1:
+                glicemia_input = "0" + glicemia_input
+            if len(glicemia_input) == 2 or len(glicemia_input) == 3:
+                return glicemia_input
+            else:
+                print("Valor inválido. Digite um valor de 2 ou 3 dígitos.")
+
+    def get_meal_type(self):
+        while True:
+            meal_type = input("\nQual o tipo de refeição?\n1: Café da manhã\n2: Almoço\n3: Janta\n4: Lanche\n0: Não fará refeição\nEscolha uma opção: ")
+            if meal_type in ["0", "1", "2", "3", "4"]:
+                return meal_type
+            else:
+                print("Opção inválida. Escolha uma opção válida.")
+
+    def get_food(self):
+        alimentos = []
+        while True:
+            nome_alimento = input("Digite o nome do alimento (ou '0' para encerrar): ")
+            if nome_alimento == '0':
+                break
+            while True:
+                try:
+                    porcao_alimento = float(input("Digite a porção do alimento: "))
+                    break
+                except ValueError:
+                    print("Valor inválido. Digite um número válido para a porção.")
+
+            while True:
+                unidade_alimento = input("Digite a unidade do alimento (g para gramas, m para mililitros): ")
+                if unidade_alimento.lower() in ['g', 'm']:
+                    break
+                else:
+                    print("Unidade inválida. Digite 'g' para gramas ou 'm' para mililitros.")
+
+            alimentos.append({"nome": nome_alimento, "porcao": porcao_alimento, "unidade": unidade_alimento})
+
+            while True:
+              more_foods = input("Deseja inserir mais alimentos? (S/N): ")
+              if more_foods.upper() == 'S':
+                  break
+              elif more_foods.upper() == 'N':
+                  return alimentos
+              else:
+                  print("Entrada inválida. Digite 'S' para continuar ou 'N' para encerrar.")
+
+        return alimentos
+
+    def get_alimentos_names(alimentos_str):
+        try:
+            alimentos_data = json.loads(alimentos_str)
+            return [food['nome'] for food in alimentos_data]
+        except (ValueError, TypeError):
+            return []
+
+    def predict_and_recommend(self, cpf):
+        user_data = self.get_user_data(cpf)
+        if user_data:
+            meal_type = user_data.meal_type
+            #alimentos = user_data.alimentos
+            alimentos_names = 
+            
+            def check_food_in_alimentos(x):
+                alimentos_json = json.loads(x)
+                return any(food['nome'] in [f['nome'] for f in alimentos_json] for food in alimentos)
+
+            relevant_historical_data = self.historical_data[(self.historical_data['cpf'] == cpf) &
+                                                        (self.historical_data['meal_type'] == meal_type) &
+                                                        self.historical_data['alimentos_names'].apply(lambda x: any(food in x) for food in alimentos_names)]
+                                                        #self.historical_data['alimentos'].apply(check_food_in_alimentos)]
+            
+            total_porcao_grams = sum(food["porcao"] for food in alimentos if food["unidade"] == "g")
+            total_porcao_milliliters = sum(food["porcao"] for food in alimentos if food["unidade"] == "m")
+
+            if total_porcao_grams > 0:
+                grams_data = relevant_historical_data[relevant_historical_data['unidade'] == 'g']
+                grams_X = grams_data['porcao_alimento'].values.reshape(-1, 1)
+                grams_y = grams_data['glicemia'].values
+
+                grams_model = LinearRegression()
+                grams_model.fit(grams_X, grams_y)
+
+                predicted_glicemia_grams = grams_model.predict([[total_porcao_grams]])[0]
+            else:
+                predicted_glicemia_grams = None
+
+            if total_porcao_milliliters > 0:
+                milliliters_data = relevant_historical_data[relevant_historical_data['unidade'] == 'm']
+                milliliters_X = milliliters_data['porcao_alimento'].values.reshape(-1, 1)
+                milliliters_y = milliliters_data['glicemia'].values
+
+                milliliters_model = LinearRegression()
+                milliliters_model.fit(milliliters_X, milliliters_y)
+
+                predicted_glicemia_milliliters = milliliters_model.predict([[total_porcao_milliliters]])[0]
+            else:
+                predicted_glicemia_milliliters = None
+
+            if predicted_glicemia_grams is not None and predicted_glicemia_milliliters is not None:
+                predicted_glicemia = (predicted_glicemia_grams + predicted_glicemia_milliliters) / 2
+            elif predicted_glicemia_grams is not None:
+                predicted_glicemia = predicted_glicemia_grams
+            else:
+                predicted_glicemia = predicted_glicemia_milliliters
+
+            print("\nPrevisão de Glicemia Futura:", predicted_glicemia)
+            self.recommend_materials(cpf)
+        else:
+            print("\nUsuário não encontrado ou sem dados registrados.")
+
+    def recommend_materials(self, cpf):
+        user_data = self.get_user_data(cpf)
+        if user_data:
+            meal_type = user_data["meal_type"]
+            alimentos = user_data["alimentos"]
+
+            relevant_historical_data = self.historical_data[(self.historical_data['cpf'] == cpf) &
+                                                            (self.historical_data['meal_type'] == meal_type) &
+                                                            (self.historical_data['nome_alimento'].isin([food['nome'] for food in alimentos]))]
+
+            # Calcula a média das glicemias para cada alimento
+            mean_glicemias = relevant_historical_data.groupby('nome_alimento')['glicemia'].mean()
+
+            # Obtém a lista de alimentos consumidos pelo usuário nesta refeição
+            consumed_alimentos = [food['nome'] for food in alimentos]
+
+            # Filtra os alimentos consumidos e ordena pela média das glicemias
+            recommended_alimentos = mean_glicemias[~mean_glicemias.index.isin(consumed_alimentos)].sort_values()
+
+            # Exibe os 3 alimentos recomendados com base nas menores médias de glicemia
+            print("\nAlimentos recomendados com base em menores médias de glicemia:")
+            for i, (alimento, mean_glicemia) in enumerate(recommended_alimentos.head(3).items(), 1):
+                print(f"{i}. {alimento} (Média de Glicemia: {mean_glicemia:.2f})")
+
+            # Realiza a recomendação de materiais educacionais usando a biblioteca implicit
+            # Substitua os seguintes IDs de materiais pelos IDs reais do seu conjunto de dados
+            material_ids = [1, 2, 3]  # IDs de materiais educacionais
+            material_consumption = [1 if alimento in consumed_alimentos else 0 for alimento in recommended_alimentos.index]
+
+            # Constrói uma matriz de interações entre alimentos recomendados e materiais educacionais
+            interactions = np.array([material_consumption] * len(material_ids)).T
+
+            # Aplica o algoritmo de recomendação alternada aos dados de interações
+            model = AlternatingLeastSquares(factors=50)
+            model.fit(interactions)
+
+            # Realiza a recomendação dos materiais educacionais para o usuário
+            user_recommendations = model.recommend(userid=0, user_items=interactions.T, N=3)
+
+            print("\nMateriais educacionais recomendados:")
+            for i, material_idx in enumerate(user_recommendations):
+                print(f"{i + 1}. Material ID: {material_ids[material_idx]}")
+
+        else:
+            print("\nUsuário não encontrado ou sem dados registrados.")
+
+# Criação da instância do modelo
+glicnut_model = GlicnutModel("historical_data.csv")
+
+# Interface de interação com o usuário
+while True:
+    print("\n====================")
+    print("GLICNUT - Sistema de Acompanhamento para pacientes com Diabetes")
+    print("====================\n")
+    cpf = input("Digite o CPF do usuário (ou '0' para sair): ")
+    if cpf == "0":
+        break
+
+    if len(cpf) != 11 or not cpf.isdigit():
+        print("\nCPF inválido. Digite um CPF válido com 11 dígitos numéricos.")
+        continue
+
+    user_data = glicnut_model.get_user_data(cpf)
+    if not user_data:
+        new_user = input("\nUsuário não encontrado. Deseja cadastrar um novo usuário? (s/n): ")
+        if new_user.lower() == "s":
+            glicnut_model.register_user(cpf)
+        continue
+
+    glicemia = glicnut_model.get_glicemia()
+    meal_type = glicnut_model.get_meal_type()
+
+    if meal_type == "0":
+        #glicemia = glicnut_model.get_glicemia()
+        glicnut_model.save_user_data(cpf, meal_type, glicemia, [])
+        print("\nDados registrados com sucesso!")
+        print("Glicemia:", glicemia)
+        meal_name = "Não fará refeição"
+        print("Tipo de Refeição:", meal_type, " - ", meal_name)
+        print("\nRefeição registrada como não realizada.")
+        glicnut_model.predict_and_recommend(cpf)
+    else:
+        alimentos = glicnut_model.get_food()
+        glicnut_model.save_user_data(cpf, meal_type, glicemia, alimentos)
+        print("\nDados registrados com sucesso!")
+        print("Glicemia:", glicemia)
+        if meal_type == "1":
+            meal_name = "Café da manhã"
+        elif meal_type == "2":
+            meal_name = "Almoço"
+        elif meal_type == "3":
+            meal_name = "Janta"
+        elif meal_type == "4":
+            meal_name = "Lanche"
+        print("Tipo de Refeição:", meal_type, " - ", meal_name)
+        print("\nRefeição Registrada:")
+        print("Alimentos Consumidos:")
+        for alimento in alimentos:
+            print(f"Nome: {alimento['nome']}, Porção: {alimento['porcao']} {alimento['unidade']}")
+        glicnut_model.predict_and_recommend(cpf)
